@@ -8,5 +8,5 @@ It has features:
 - [X] Nothing else
 - [ ] Maybe malware tho
 
-#Resources 
+# Resources 
 https://viewsourcecode.org/snaptoken/kilo/03.rawInputAndOutput.html (currently on step 31)

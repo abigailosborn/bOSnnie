@@ -89,14 +89,37 @@ char editorReadKey(){
     }
     return c;
 }
+
+int getCursorPosition(int *rows, int *cols){
+    char buf[32];
+    unsigned int i = 0; 
+    //die closed 
+    if(write(STDIN_FILENO, "\x1b[6n", 4) != 4) return -1;
+    //print new line
+    printf("\r\n");
+    while(i < sizeof(buf) - 1){
+        //break if there's an error
+        if(read(STDIN_FILENO, &buf[i], 1) != 1) break;
+        if(buf[i] == 'R') break;
+        i++;
+    }
+
+    //assign 0 to the final byte of buf so it knows when string terminates
+    buf[i] = '\0';
+    //skip first character of the buffer by passin &buf[i] when printing because first character is an escape character that will be ignored
+    printf("\r\n&buf[i]: '%s'\r\n", &buf[1]);
+    editorReadKey();
+    return -1; 
+}
+
 //get the window size, it's right in the name
 int getWindowSize(int *rows, int *cols){
     struct winsize ws;
     //check if broken, specifically the window size 
     if(ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0){
         if(write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return -1;
-        editorReadKey();
-        return -1; 
+        //don't let cursor go past window boundaries?
+        return getCursorPosition(rows, cols);
     }
     //place cols and rows into winsize struct 
     else{

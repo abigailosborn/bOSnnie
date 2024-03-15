@@ -7,3 +7,6 @@ It has features:
 - [ ] Fun Application (gourdey)
 - [X] Nothing else
 - [ ] Maybe malware tho
+
+# Resources 
+https://viewsourcecode.org/snaptoken/kilo/03.rawInputAndOutput.html (currently on step 31)

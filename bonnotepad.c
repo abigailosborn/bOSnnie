@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <termios.h>
@@ -106,10 +107,12 @@ int getCursorPosition(int *rows, int *cols){
 
     //assign 0 to the final byte of buf so it knows when string terminates
     buf[i] = '\0';
-    //skip first character of the buffer by passin &buf[i] when printing because first character is an escape character that will be ignored
-    printf("\r\n&buf[i]: '%s'\r\n", &buf[1]);
-    editorReadKey();
-    return -1; 
+    
+    //ignore esacpe characters and open brace
+    if(buf[0] != '\x1b' || buf[1] != '[') return -1;
+    //parse two integers seperated by ; and put values in rows and cols variables
+    if(sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
+    return 0;
 }
 
 //get the window size, it's right in the name
@@ -128,11 +131,37 @@ int getWindowSize(int *rows, int *cols){
         return 0;
     }
 }
+
+//append buffer
+struct abuf{
+    char *b;
+    int len;
+};
+
+#define ABUF_INIT {NULL, 0}
+
+void abAppend(struct abuf *ab, const char *s, int len){
+    //allocate enough memory to hold a new string  
+    char *new = realloc(ab->b, ab->len + len);
+    if(new == NULL) return;
+    memcpy(&new[ab->len], s, len);
+    ab->b = new;
+    ab->len += len;
+}
+//get rid of excess memory 
+void abFree(struct abuf *ab){
+    free(ab->b);
+}
+
 //draw each row of the buffer of text being edited
 void editorDrawRows(){
     int y;
     for(y = 0; y < E.screenrows; y++){
-        write(STDOUT_FILENO, "~\r\n", 3);
+        write(STDOUT_FILENO, "~", 1);
+        //if at end write last line 
+        if(y < E.screenrows -1){
+            write(STDOUT_FILENO, "\r\n", 2);
+        }
     }
 }
 

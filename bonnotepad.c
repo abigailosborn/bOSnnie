@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <termios.h>
 #define CTRL_KEY(k) ((k) & 0x1f)
+#define KILO_VERSION "0.0.1"
 
 //New Vocab:
 
@@ -154,27 +155,41 @@ void abFree(struct abuf *ab){
 }
 
 //draw each row of the buffer of text being edited
-void editorDrawRows(){
+void editorDrawRows(struct abuf *ab){
     int y;
     for(y = 0; y < E.screenrows; y++){
-        write(STDOUT_FILENO, "~", 1);
+        if(y == E.screenrows / 3){
+            //print a welcome message
+            char welcome[80];
+            int welcomelen = snprintf(welcome, sizeof(welcome), "Kilo Editor -- version %s", KILO_VERSION);
+            if(welcomelen > E.screencols) welcomelen = E.screencols; abAppend(ab, welcome, welcomelen);
+        }
+        else{
+            abAppend(ab, "~", 1);
+        }
+        abAppend(ab, "\x1b[K", 3);
         //if at end write last line 
         if(y < E.screenrows -1){
-            write(STDOUT_FILENO, "\r\n", 2);
+            abAppend(ab, "\r\n", 2);
         }
     }
 }
 
 //refresh screen
 void editorRefreshScreen(){
-    //4 means that we are writing 4 bytes to the terminal
-    // \x1b is first byte which is the escape character
-    write(STDOUT_FILENO, "\x1b[2J", 4);
+    struct abuf ab = ABUF_INIT;
+    //Hide the cursor when the screen is being drawn 
+    abAppend(&ab, "\x1b[?25l", 6);
     //reset the cursor position
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    abAppend(&ab, "\x1b[H", 3);
     //draw rows of buffer text 
-    editorDrawRows();
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    editorDrawRows(&ab);
+    abAppend(&ab, "\x1b[H", 3);
+    //unhide cursor
+    abAppend(&ab, "|x1b[?25h", 6);
+    write(STDOUT_FILENO, ab.b, ab.len);
+    //free extra memory
+    abFree(&ab);
 }
 
 void editorProcessKeypress(){

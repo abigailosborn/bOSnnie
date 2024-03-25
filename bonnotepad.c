@@ -1,11 +1,18 @@
+//above the includes because header files included use the macros
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <termios.h>
+
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define KILO_VERSION "0.0.1"
 
@@ -49,12 +56,20 @@ void die(const char *s){
     perror(s);
     exit(1);
 }
+//stores a line of text as pointer to dynamically allocated character and data length
+typedef struct erow{
+    int size;
+    char *chars;
+}
+erow;
 
 struct editorConfig{
     //cursor x and y position
     int cx, cy;
     int screenrows;
     int screencols;
+    int numrows;
+    erow *row;
     struct termios orig_termios;
 };
 
@@ -197,7 +212,39 @@ int getWindowSize(int *rows, int *cols){
         return 0;
     }
 }
-
+void editorAppendRow(char *s, size_t len){
+    E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1));
+    
+    int at = E.numrows;
+    E.row[at].size = len;
+    //allocate enough memory for the length of the message
+    E.row[at].chars = malloc(len + 1);
+    //memcpy() the message to the chars field which points to the allocated memory
+    memcpy(E.row[at].chars, s, len);
+    E.row[at].chars[len] = '\0';
+    //set numrows to one to indict erow has a line that now needs to be displayed
+    E.numrows++;    
+}
+//File i/o
+void editorOpen(char *filename){
+    //fopen takes a filename and opens the file for reading
+    FILE *fp = fopen(filename, "r");
+    if(!fp) die ("fopen");
+    char *line = NULL;
+    size_t linecap = 0;
+    //Length of each line
+    ssize_t linelen;
+    //getline is useful for as it does memory management for you, as long as linecap still has space it'll continue to read
+    linelen = getline(&line, &linecap, fp);
+    if(linelen != -1){
+        while(linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')){
+            linelen--;
+        }
+        editorAppendRow(line, linelen);
+    }
+    free(line);
+    fclose(fp);
+}
 //append buffer
 struct abuf{
     char *b;
@@ -223,22 +270,32 @@ void abFree(struct abuf *ab){
 void editorDrawRows(struct abuf *ab){
     int y;
     for(y = 0; y < E.screenrows; y++){
-        if(y == E.screenrows / 3){
-            //print a welcome message
-            char welcome[80];
-            int welcomelen = snprintf(welcome, sizeof(welcome), "Kilo Editor -- version %s", KILO_VERSION);
-            if(welcomelen > E.screencols) welcomelen = E.screencols;
-            //center the string 
-            int padding = (E.screencols - welcomelen) / 2;
-            if(padding){
-                abAppend(ab, "~", 1);
-                padding--;
+        //check to see if the row being drawn is after the end of the text buffer
+        if(y >= E.numrows){
+            if(E.numrows == 0 && y == E.screenrows / 3){
+                //print a welcome message only if the buffer is completely empty
+                char welcome[80];
+                int welcomelen = snprintf(welcome, sizeof(welcome), "Kilo Editor -- version %s", KILO_VERSION);
+                if(welcomelen > E.screencols) welcomelen = E.screencols;
+                //center the string 
+                int padding = (E.screencols - welcomelen) / 2;
+                if(padding){
+                    abAppend(ab, "~", 1);
+                    padding--;
+                }
+                while(padding--) abAppend(ab, " ", 1);
+                abAppend(ab, welcome, welcomelen);
             }
-            while(padding--) abAppend(ab, " ", 1);
-            abAppend(ab, welcome, welcomelen);
+            else{
+                abAppend(ab, "~", 1);
+             }
         }
+        //draw a row that's part of the text buffer
         else{
-            abAppend(ab, "~", 1);
+            //length of row
+            int len = E.row[y].size;
+            if(len > E.screencols) len = E.screencols;
+            abAppend(ab, E.row[y].chars, len);  
         }
         abAppend(ab, "\x1b[K", 3);
         //if at end write last line 
@@ -342,12 +399,17 @@ void editorProcessKeypress(){
 void initEditor(){
     E.cx = 0;
     E.cy = 0;
+    E.numrows = 0;
+    E.row = NULL;
     if(getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
 }
 
-int main(){
+int main(int argc, char *argv[]){
     enableRawMode();
     initEditor();
+    if(argc >= 2){
+        editorOpen(argv[1]);
+    }
 
     while(1){
         editorRefreshScreen();

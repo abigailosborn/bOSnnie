@@ -1,8 +1,8 @@
-//above the includes because header files included use the macros
 #define _DEFAULT_SOURCE
 #define _BSD_SOURCE
 #define _GNU_SOURCE
 
+//above the includes because header files included use the macros
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
@@ -66,6 +66,8 @@ erow;
 struct editorConfig{
     //cursor x and y position
     int cx, cy;
+    //row offset 
+    int rowoff;
     int screenrows;
     int screencols;
     int numrows;
@@ -265,13 +267,22 @@ void abAppend(struct abuf *ab, const char *s, int len){
 void abFree(struct abuf *ab){
     free(ab->b);
 }
-
+//scroll up and down in the editor
+void editorScroll(){
+    if(E.cy < E.rowoff){
+        E.rowoff = E.cy
+    }
+    if(E.cy >= E.rowoff + E.screenrows){
+        E.rowoff = E.cy - E.screenrows + 1;
+    }
+}
 //draw each row of the buffer of text being edited
 void editorDrawRows(struct abuf *ab){
     int y;
     for(y = 0; y < E.screenrows; y++){
         //check to see if the row being drawn is after the end of the text buffer
-        if(y >= E.numrows){
+        int filerow = y  + E.rowoff;
+        if(filerow >= E.numrows){
             if(E.numrows == 0 && y == E.screenrows / 3){
                 //print a welcome message only if the buffer is completely empty
                 char welcome[80];
@@ -293,9 +304,9 @@ void editorDrawRows(struct abuf *ab){
         //draw a row that's part of the text buffer
         else{
             //length of row
-            int len = E.row[y].size;
+            int len = E.row[filerow].size;
             if(len > E.screencols) len = E.screencols;
-            abAppend(ab, E.row[y].chars, len);  
+            abAppend(ab, E.row[filerow].chars, len);  
         }
         abAppend(ab, "\x1b[K", 3);
         //if at end write last line 
@@ -304,9 +315,10 @@ void editorDrawRows(struct abuf *ab){
         }
     }
 }
-
+i
 //refresh screen
 void editorRefreshScreen(){
+    editorScroll();
     struct abuf ab = ABUF_INIT;
     //Hide the cursor when the screen is being drawn 
     abAppend(&ab, "\x1b[?25l", 6);
@@ -317,7 +329,7 @@ void editorRefreshScreen(){
 
     //Moving the cursor!!
     char buf[32];
-    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, E.cx + 1);
     abAppend(&ab, buf, strlen(buf));
 
     //unhide cursor
@@ -350,7 +362,7 @@ void editorMoveCursor(int key){
             break;
         //Go down 
         case ARROW_DOWN:
-            if(E.cy != E.screenrows -1){
+            if(E.cy != E.numrows){
                 E.cy++;
             }
             break;
@@ -399,6 +411,8 @@ void editorProcessKeypress(){
 void initEditor(){
     E.cx = 0;
     E.cy = 0;
+    //initialized to 0 so it'll be scrolled up automatically
+    E.rowoff = 0;
     E.numrows = 0;
     E.row = NULL;
     if(getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");

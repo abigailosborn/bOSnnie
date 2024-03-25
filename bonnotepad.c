@@ -38,6 +38,8 @@ void die(const char *s){
 }
 
 struct editorConfig{
+    //cursor x and y position
+    int cx, cy;
     int screenrows;
     int screencols;
     struct termios orig_termios;
@@ -89,7 +91,25 @@ char editorReadKey(){
     while((nread = read(STDIN_FILENO, &c, 1)) != 1){
         if(nread == -1 && errno != EAGAIN) die("read");
     }
-    return c;
+    if(c == '\x1b'){
+        char seq[3];
+
+        if(read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+        if(read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+        //use arrow keys to move cursor        
+        if(seq[0] == '['){
+            switch(seq[1]){
+                case 'A': return 'w';
+                case 'B': return 's';
+                case 'C': return 'd';
+                case 'D': return 'a';
+            }
+        }
+    return '\x1b';
+    }
+    else{
+        return c; 
+    }
 }
 
 int getCursorPosition(int *rows, int *cols){
@@ -162,7 +182,15 @@ void editorDrawRows(struct abuf *ab){
             //print a welcome message
             char welcome[80];
             int welcomelen = snprintf(welcome, sizeof(welcome), "Kilo Editor -- version %s", KILO_VERSION);
-            if(welcomelen > E.screencols) welcomelen = E.screencols; abAppend(ab, welcome, welcomelen);
+            if(welcomelen > E.screencols) welcomelen = E.screencols;
+            //center the string 
+            int padding = (E.screencols - welcomelen) / 2;
+            if(padding){
+                abAppend(ab, "~", 1);
+                padding--;
+            }
+            while(padding--) abAppend(ab, " ", 1);
+            abAppend(ab, welcome, welcomelen);
         }
         else{
             abAppend(ab, "~", 1);
@@ -184,12 +212,39 @@ void editorRefreshScreen(){
     abAppend(&ab, "\x1b[H", 3);
     //draw rows of buffer text 
     editorDrawRows(&ab);
-    abAppend(&ab, "\x1b[H", 3);
+
+    //Moving the cursor!!
+    char buf[32];
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+    abAppend(&ab, buf, strlen(buf));
+
     //unhide cursor
-    abAppend(&ab, "|x1b[?25h", 6);
+    abAppend(&ab, "\x1b[?25h", 6);
     write(STDOUT_FILENO, ab.b, ab.len);
     //free extra memory
     abFree(&ab);
+}
+
+void editorMoveCursor(char key){
+    //input to move the cursor around
+    switch(key){
+        //Go left 
+        case 'a':
+            E.cx--;
+            break;
+        //Go right
+        case 'd':
+            E.cx++;
+            break;
+        //Go up
+        case 'w':
+            E.cy--;
+            break;
+        //Go down 
+        case 's':
+            E.cy++;
+            break;
+    }
 }
 
 void editorProcessKeypress(){
@@ -205,10 +260,19 @@ void editorProcessKeypress(){
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
             break;
+
+        case 'w':
+        case 's':
+        case 'a':
+        case 'd':
+            editorMoveCursor(c);
+            break;
     }
 }
 //initialize all fields in the E struct
 void initEditor(){
+    E.cx = 0;
+    E.cy = 0;
     if(getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
 }
 

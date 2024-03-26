@@ -68,6 +68,8 @@ struct editorConfig{
     int cx, cy;
     //row offset 
     int rowoff;
+    //column offset
+    int coloff;
     int screenrows;
     int screencols;
     int numrows;
@@ -270,10 +272,17 @@ void abFree(struct abuf *ab){
 //scroll up and down in the editor
 void editorScroll(){
     if(E.cy < E.rowoff){
-        E.rowoff = E.cy
+        E.rowoff = E.cy;
     }
     if(E.cy >= E.rowoff + E.screenrows){
         E.rowoff = E.cy - E.screenrows + 1;
+    }
+    //horizontal scrolling
+    if(E.cx < E.coloff){
+        E.coloff = E.cx - E.screencols + 1;
+    }
+    if(E.cx >= E.coloff + E.screencols){
+        E.coloff = E.cx - E.screencols + 1;
     }
 }
 //draw each row of the buffer of text being edited
@@ -304,9 +313,10 @@ void editorDrawRows(struct abuf *ab){
         //draw a row that's part of the text buffer
         else{
             //length of row
-            int len = E.row[filerow].size;
+            int len = E.row[filerow].size - E.coloff;
+            if(len < 0) len = 0;
             if(len > E.screencols) len = E.screencols;
-            abAppend(ab, E.row[filerow].chars, len);  
+            abAppend(ab, &E.row[filerow].chars[E.coloff], len);  
         }
         abAppend(ab, "\x1b[K", 3);
         //if at end write last line 
@@ -315,7 +325,7 @@ void editorDrawRows(struct abuf *ab){
         }
     }
 }
-i
+
 //refresh screen
 void editorRefreshScreen(){
     editorScroll();
@@ -329,7 +339,7 @@ void editorRefreshScreen(){
 
     //Moving the cursor!!
     char buf[32];
-    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, E.cx + 1);
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, (E.cx - E.coloff) + 1);
     abAppend(&ab, buf, strlen(buf));
 
     //unhide cursor
@@ -340,6 +350,7 @@ void editorRefreshScreen(){
 }
 
 void editorMoveCursor(int key){
+    erow *row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
     //input to move the cursor around
     switch(key){
         //Go left 
@@ -348,9 +359,9 @@ void editorMoveCursor(int key){
                 E.cx--;
             }
             break;
-        //Go right
+        //Go right, can scroll past the edge of the screen
         case ARROW_RIGHT:
-            if(E.cx != E.screencols -1){
+            if(row && E.cx < row->size){
                 E.cx++;
             }
             break;
@@ -413,6 +424,8 @@ void initEditor(){
     E.cy = 0;
     //initialized to 0 so it'll be scrolled up automatically
     E.rowoff = 0;
+    //initialized to 0 it'll be scrolled left automatically
+    E.coloff = 0;
     E.numrows = 0;
     E.row = NULL;
     if(getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");

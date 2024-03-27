@@ -5,15 +5,16 @@
 //above the includes because header files included use the macros
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
-#include <unistd.h>
 #include <termios.h>
 #include <time.h>
+#include <unistd.h>
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define KILO_VERSION "0.0.1"
@@ -36,6 +37,7 @@
 
 //define keys for cursor movement
 enum editorKey{
+    BACKSPACE = 127,
     ARROW_LEFT = 1000,
     ARROW_RIGHT,
     ARROW_UP,
@@ -283,9 +285,58 @@ void editorAppendRow(char *s, size_t len){
     //set numrows to one to indict erow has a line that now needs to be displayed
     E.numrows++;    
 }
+//insert characters into rows 
+void editorRowInsertChar(erow *row, int at, int c){
+    if(at < 0 || at > row->size) at = row->size;
+    //reallocate memory for characters that are being typed in 
+    row->chars = realloc(row->chars, row->size + 2);
+    //using memmove insead of memcpy incase source and destination arrays overlap
+    memmove(&row->chars[at + 1], &row->chars, row->size - at + 1);
+    //increment the size of rows as characters are inserted
+    row->size++;
+    //figure out where to add the char
+    row->chars[at] = c;
+    //update rows 
+    editorUpdateRow(row);
+}
+//if E.cy is equal to E.numrows then cursor is on line after the end of the file
+void editorInsertChar(int c){
+    if(E.cy == E.numrows){
+        //add new row to file before inserting character
+        editorAppendRow("", 0);
+    }
+    editorRowInsertChar(&E.row[E.cy], E.cx, c);
+    E.cx++;
+}
+
 //File i/o
+
+char *editorRowsToString(int *buflen){
+    //initialize a variable to hold the total length
+    int totlen = 0;
+    int j;
+    //add up the lengths of each row 
+    for(j = 0; j < E.numrows; j++){
+        totlen += E.row[j].size +1;
+    }
+    *buflen = totlen;
+
+    //allocate enough memory for the total length of the buffer
+    char *buf = malloc(totlen);
+    char *p  = buf;
+    //copy the content of each row to the end of the buffer
+    for(j = 0; j < E.numrows; j++){
+        memcpy(p, E.row[j].chars, E.row[j].size);
+        p += E.row[j].size;
+        *p = '\n';
+        p++;
+    }
+    //return the buffer, expecting the caller to free the memory 
+    return buf;
+}
+
 void editorOpen(char *filename){
-    // Replace the current filename with the new one
+    //Replace the current filename with the new one
     free(E.filename);
     E.filename = strdup(filename);
 
@@ -312,6 +363,26 @@ struct abuf{
     char *b;
     int len;
 };
+
+void editorSave(){
+    //if the file doesn't already exist set null and do nothing for now
+    if(E.filename == NULL) return;
+
+    int len;
+    char *buf = editorRowsToString(&len);
+    //0644 standard permissions for text files
+    //O_RDWR opens a file in read write mode 
+    //O_CREAT checks if file has already been created 
+    int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
+    //gives file size in len of bytes
+    ftruncate(fd, len);
+    //write the buffer to the file 
+    write(fd, buf, len);
+    //close the file
+    close(fd);
+    //free the memory that was allocated for the buffer
+    free(buf);
+}
 
 #define ABUF_INIT {NULL, 0}
 
@@ -514,6 +585,10 @@ void editorProcessKeypress(){
     int c = editorReadKey();
     
     switch(c){
+        //make a case for the enter key 
+        case '\r':
+            /*TODO*/
+        break; 
         //quit on ctrl q 
         case CTRL_KEY('q'):
             //4 means that we are writing 4 bytes to the terminal
@@ -523,13 +598,23 @@ void editorProcessKeypress(){
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
             break;
+        //save on ctrl s 
+        case CTRL_KEY('s'):
+            editorSave();
+            break;
         case HOME_KEY:
             E.cx = 0;
             break;
         case END_KEY:
             if (E.cy < E.numrows)
                 E.cx = E.row[E.cy].size;
-            break;   
+            break;  
+        case BACKSPACE:
+        //old backspace character
+        case CTRL_KEY('h'):
+        case DEL_KEY:
+            /*TODO*/
+            break; 
         case PAGE_UP:
         case PAGE_DOWN:
             {
@@ -553,6 +638,14 @@ void editorProcessKeypress(){
         case ARROW_LEFT:
         case ARROW_RIGHT:
             editorMoveCursor(c);
+            break;
+        //terminal refresh, will basically press escape key
+        case CTRL_KEY('l'):
+        case '\x1b':
+            break;
+        //by default assume char is being added 
+        default:
+            editorInsertChar(c);
             break;
     }
 }

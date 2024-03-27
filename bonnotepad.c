@@ -15,6 +15,7 @@
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define KILO_VERSION "0.0.1"
+#define KILO_TAB_STOP 4
 
 //New Vocab:
 
@@ -59,13 +60,19 @@ void die(const char *s){
 //stores a line of text as pointer to dynamically allocated character and data length
 typedef struct erow{
     int size;
+    //size of the row
+    int rsize; 
     char *chars;
+    //contains size of content of the render 
+    char *render;
 }
 erow;
 
 struct editorConfig{
     //cursor x and y position
     int cx, cy;
+    //index for the render field 
+    int rx; 
     //row offset 
     int rowoff;
     //column offset
@@ -216,6 +223,45 @@ int getWindowSize(int *rows, int *cols){
         return 0;
     }
 }
+//convert chars index in render index
+int editorRowCxToRx(erow *row, int cx){
+    int rx = 0;
+    int j;
+    for(j = 0; j < cx; j++){
+        if(row->chars[j] == '\t'){
+            rx += (KILO_TAB_STOP - 1) - (rx % KILO_TAB_STOP);
+        }
+        rx++;
+    }
+    return rx;
+}
+
+void editorUpdateRow(erow *row){
+    int tabs = 0;
+    int j;
+    //render a tab as multiple spaces
+    //loop for chars and count each tab to figure out how much memory to allocate 
+    for(j = 0; j < row->size; j++){
+        //\t is the tab character
+        if(row->chars[j] == '\t') tabs++;
+    }
+    free(row->render);
+    //allocate the memory for the rendering of each row
+    row->render = malloc(row->size + tabs*(KILO_TAB_STOP - 1)  + 1);
+    int idx = 0;
+    for(j = 0; j < row->size; j++){
+        if(row->chars[j] == '\t'){
+            row->render[idx++] = ' ';
+            while(idx % KILO_TAB_STOP != 0) row->render[idx++] = ' ';
+        }
+        else{
+            row->render[idx++] = row->chars[j];
+        }
+    }   
+    row->render[idx] = '\0';
+    row->rsize = idx; 
+}
+
 void editorAppendRow(char *s, size_t len){
     E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1));
     
@@ -226,6 +272,9 @@ void editorAppendRow(char *s, size_t len){
     //memcpy() the message to the chars field which points to the allocated memory
     memcpy(E.row[at].chars, s, len);
     E.row[at].chars[len] = '\0';
+    E.row[at].rsize = 0;
+    E.row[at].render = NULL;
+    editorUpdateRow(&E.row[at]);
     //set numrows to one to indict erow has a line that now needs to be displayed
     E.numrows++;    
 }
@@ -271,6 +320,7 @@ void abFree(struct abuf *ab){
 }
 //scroll up and down in the editor
 void editorScroll(){
+    E.rx = E.cx;
     if(E.cy < E.rowoff){
         E.rowoff = E.cy;
     }
@@ -278,11 +328,11 @@ void editorScroll(){
         E.rowoff = E.cy - E.screenrows + 1;
     }
     //horizontal scrolling
-    if(E.cx < E.coloff){
-        E.coloff = E.cx - E.screencols + 1;
+    if(E.rx < E.coloff){
+        E.coloff = E.rx;
     }
-    if(E.cx >= E.coloff + E.screencols){
-        E.coloff = E.cx - E.screencols + 1;
+    if(E.rx >= E.coloff + E.screencols){
+        E.coloff = E.rx - E.screencols + 1;
     }
 }
 //draw each row of the buffer of text being edited
@@ -313,10 +363,10 @@ void editorDrawRows(struct abuf *ab){
         //draw a row that's part of the text buffer
         else{
             //length of row
-            int len = E.row[filerow].size - E.coloff;
+            int len = E.row[filerow].rsize - E.coloff;
             if(len < 0) len = 0;
             if(len > E.screencols) len = E.screencols;
-            abAppend(ab, &E.row[filerow].chars[E.coloff], len);  
+            abAppend(ab, &E.row[filerow].render[E.coloff], len);  
         }
         abAppend(ab, "\x1b[K", 3);
         //if at end write last line 
@@ -339,7 +389,7 @@ void editorRefreshScreen(){
 
     //Moving the cursor!!
     char buf[32];
-    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, (E.cx - E.coloff) + 1);
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, (E.rx - E.coloff) + 1);
     abAppend(&ab, buf, strlen(buf));
 
     //unhide cursor
@@ -358,11 +408,21 @@ void editorMoveCursor(int key){
             if(E.cx != 0){
                 E.cx--;
             }
+            //move left at the beginning of the line to go to the end of the previous line
+            else if(E.cy > 0){
+                E.cy--;
+                E.cx = E.row[E.cy].size;
+            }
             break;
         //Go right, can scroll past the edge of the screen
         case ARROW_RIGHT:
             if(row && E.cx < row->size){
                 E.cx++;
+            }
+            //if at the end of a line go back to beginning 
+            else if(row && E.cx == row->size){
+                E.cy++;
+                E.cx = 0;
             }
             break;
         //Go up
@@ -377,6 +437,12 @@ void editorMoveCursor(int key){
                 E.cy++;
             }
             break;
+    }
+    //snap cursor to the end of the line 
+    row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
+    int rowlen = row ? row->size : 0;
+    if(E.cx > rowlen){
+        E.cx = rowlen;
     }
 }
 
@@ -422,6 +488,7 @@ void editorProcessKeypress(){
 void initEditor(){
     E.cx = 0;
     E.cy = 0;
+    E.rx = 0;
     //initialized to 0 so it'll be scrolled up automatically
     E.rowoff = 0;
     //initialized to 0 it'll be scrolled left automatically

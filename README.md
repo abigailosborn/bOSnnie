@@ -9,4 +9,4 @@ It has features:
 - [ ] Maybe malware tho
 
 # Resources 
-https://viewsourcecode.org/snaptoken/kilo/04.aTextViewer.html (currently on step 65)
+https://viewsourcecode.org/snaptoken/kilo/04.aTextViewer.html (currently on step 88)

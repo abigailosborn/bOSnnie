@@ -93,6 +93,8 @@ struct editorConfig{
 
 struct editorConfig E;
 
+void editorSetStatusMessage(const char *fmt, ...);
+
 //disabling raw mode
 void disableRawMode(){
     //tcgetattr() sets a terminal's attributes
@@ -374,14 +376,23 @@ void editorSave(){
     //O_RDWR opens a file in read write mode 
     //O_CREAT checks if file has already been created 
     int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
-    //gives file size in len of bytes
-    ftruncate(fd, len);
-    //write the buffer to the file 
-    write(fd, buf, len);
-    //close the file
-    close(fd);
+    if(fd != -1){
+        //gives file size in len of bytes
+        if(ftruncate(fd, len) != -1){
+            if(write(fd, buf, len) == len){
+                //close the file
+                close(fd);
+                free(buf);
+                //send message confirming save
+                editorSetStatusMessage("%d bytes written to disk", len);
+                return;
+            }
+        }
+        close(fd);
+    }
     //free the memory that was allocated for the buffer
     free(buf);
+    editorSetStatusMessage("Can't save, input/output error: %s", strerror(errno));
 }
 
 #define ABUF_INIT {NULL, 0}
@@ -675,7 +686,7 @@ int main(int argc, char *argv[]){
         editorOpen(argv[1]);
     }
 
-    editorSetStatusMessage("HELP: Ctrl-Q = quit");
+    editorSetStatusMessage("HELP: Ctrl-S = save | Ctrl-Q = quit");
 
     while(1){
         editorRefreshScreen();

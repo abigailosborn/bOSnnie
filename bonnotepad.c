@@ -97,6 +97,8 @@ struct editorConfig{
 struct editorConfig E;
 
 void editorSetStatusMessage(const char *fmt, ...);
+void editorRefreshScreen();
+char *editorPrompt(char *prompt);
 
 //disabling raw mode
 void disableRawMode(){
@@ -461,8 +463,15 @@ struct abuf{
 };
 
 void editorSave(){
-    //if the file doesn't already exist set null and do nothing for now
-    if(E.filename == NULL) return;
+    //if the file doesn't already exist set null prompt for a filename
+    if(E.filename == NULL){
+        E.filename = editorPrompt("Save as: %s (ESC to cancel)");
+        //If a filename isn't imported abort
+        if(E.filename == NULL){
+            editorSetStatusMessage("Save Aborted");
+            return;
+        }
+    }
 
     int len;
     char *buf = editorRowsToString(&len);
@@ -639,6 +648,47 @@ void editorSetStatusMessage(const char *fmt, ...) {
     vsnprintf(E.statusmsg, sizeof(E.statusmsg), fmt, ap);
     va_end(ap);
     E.statusmsg_time = time(NULL);
+}
+
+char *editorPrompt(char *prompt){
+    size_t bufsize = 128;
+    //allocate memory for the memory 
+    char *buf = malloc(bufsize);
+    //setting the buffer length to 0 
+    size_t buflen = 0;
+    buf[0] = '\0';
+    
+    while(1){
+        editorSetStatusMessage(prompt, buf);
+        editorRefreshScreen();
+
+        int c = editorReadKey();
+        if(c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE){
+            if(buflen != 0) buf[--buflen] = '\0';
+        }
+        else if(c == '\x1b'){
+            editorSetStatusMessage("");
+            //free the buffer memory 
+            free(buf);
+            return NULL;
+        }
+        else if(c == '\r'){
+            if(buflen != 0){
+                editorSetStatusMessage("");
+                return buf;
+            }
+        }    
+        else if(!iscntrl(c) && c < 128){
+            if(buflen == bufsize - 1){
+                bufsize *= 2;
+                //reallocate the memory to adjust for the change is size
+                buf = realloc(buf, bufsize);
+            }
+            //when user enters a printable character add it to the buffer
+            buf[buflen++] = c;
+            buf[buflen] = '\0';
+        }
+    }
 }
 
 void editorMoveCursor(int key){

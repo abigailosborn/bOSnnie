@@ -9,4 +9,4 @@ It has features:
 - [ ] Maybe malware tho
 
 # Resources 
-https://viewsourcecode.org/snaptoken/kilo/05.aTextEditor.html (currently on step 126)
+https://viewsourcecode.org/snaptoken/kilo/06.search.html (currently on step 131)

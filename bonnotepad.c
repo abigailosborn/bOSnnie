@@ -55,6 +55,8 @@ enum editorHighlight{
     //normal non keys words are black which has the ANSI code 0 
     HL_NORMAL = 0,
     HL_COMMENT,
+    HL_KEYWORD1,
+    HL_KEYWORD2,
     HL_STRING, 
     HL_NUMBER,
     HL_MATCH
@@ -80,6 +82,9 @@ void die(const char *s){
 struct editorSyntax{
     char *filetype;
     char **filematch;
+    char **keywords;
+    //make it so programs can have comments 
+    char *singleline_comment_start;
     int flags;
 };
 
@@ -120,12 +125,21 @@ struct editorConfig{
 struct editorConfig E;
 
 char *C_HL_extensions[] = {".c", ".h.", ".cpp", NULL};
+//define different keywords
+char *C_HL_keywords[] ={
+    "switch", "if", "while", "for", "break", "continue", "return", "else", "struct", "union", "typedef", "static", "enum", "class", "case", 
+
+    "int|", "long|", "double|", "float|", "char|", "unsigned|", "signed|", "void|", NULL
+};
 //HLDB stands for highlight database 
 //wooo c extension support 
 struct editorSyntax HLDB[] = {
     {
         "c",
         C_HL_extensions,
+        C_HL_keywords,
+        //syntax for comments 
+        "//",
         HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS
     },
 };
@@ -286,6 +300,10 @@ void editorUpdateSyntax(erow *row){
     memset(row->hl, HL_NORMAL, row->size);
 
     if(E.syntax == NULL) return;
+
+    char **keywords= E.syntax->keywords;
+    char *scs = E.syntax->singleline_comment_start;
+    int scs_len = scs ? strlen(scs) : 0;
     //starts as 1 because the beginning of the line is considered to be a separator
     int prev_sep = 1;
     //keep track of if we're currently inside of a string
@@ -296,6 +314,13 @@ void editorUpdateSyntax(erow *row){
     while(i < row->rsize){
         char c = row->render[i];
         unsigned char prev_hl = (i > 0) ? row->hl[i - 1] : HL_NORMAL;
+        //highlighting comments time 
+        if(scs_len && !in_string){
+            if(!strncmp(&row->render[i], scs, scs_len)){
+                memset(&row->hl[i], HL_COMMENT, row->rsize - i);
+                break;
+            }
+        }
         //highlight strings yay
         if(E.syntax->flags & HL_HIGHLIGHT_STRINGS){
             if(in_string){
@@ -329,6 +354,26 @@ void editorUpdateSyntax(erow *row){
                 continue;
             }
         }
+        //highlight keywords for c 
+        if(prev_sep){
+            int j;
+            for(j = 0; keywords[j]; j++){
+                int klen = strlen(keywords[j]);
+                //if | is after a keyword, note it is a keyword2 then delete the |
+                int kw2 = keywords[j][klen -1] == '|';
+                if(kw2) klen--;
+                    
+                if(!strncmp(&row->render[i], keywords[j], klen) && is_separator(row->render[i + klen]));
+                memset(&row->hl[i], kw2 ? HL_KEYWORD2 : HL_KEYWORD1, klen);
+                i += klen;
+                break;
+            }
+        
+            if(keywords[j] != NULL){
+                prev_sep = 0;
+                continue;
+            }
+        }
         prev_sep = is_separator(c);
         i++;
     }
@@ -338,6 +383,10 @@ int editorSyntaxToColor(int hl){
     switch(hl){
         //comments are cyan 
         case HL_COMMENT: return 36;
+        //keywords yellow
+        case HL_KEYWORD1: return 33;
+        //commonly used words green
+        case HL_KEYWORD2: return 32;
         //strings are magenta
         case HL_STRING: return 35;
         //foreground red for numbers, foreground white for anything else
@@ -813,7 +862,19 @@ void editorDrawRows(struct abuf *ab){
             int j;
             //set text color for syntax highlighting 
             for(j = 0; j < len; j++){
-                if(hl[j] == HL_NORMAL){
+                //check for unreconized characters
+                if(iscntrl(c[j])){
+                    char sym = (c[j]<= 26) ? '@' + c[j] : '?';
+                    abAppend(ab, "\x1b[7m", 5);
+                    abAppend(ab, &sym, 1);
+                    abAppend(ab, "\x1b[m", 3);
+                    if(current_color != -1){
+                        char buf[16];
+                        int clen = snprintf(buf, sizeof(buf), "\x1b[%dm", current_color);
+                        abAppend(ab, buf, clen);
+                    }
+                }
+                else if(hl[j] == HL_NORMAL){
                     //if the current color isn't normal set it so that it is
                     if(current_color != -1){
                         abAppend(ab, "\x1b[39m", 5);

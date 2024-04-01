@@ -301,9 +301,9 @@ int is_separator(int c){
 
 void editorUpdateSyntax(erow *row){
     //allocate memory for highlighting words 
-    row->hl = realloc(row->hl, row->size);
+    row->hl = realloc(row->hl, row->rsize);
     //automatically set all highlighting to normal
-    memset(row->hl, HL_NORMAL, row->size);
+    memset(row->hl, HL_NORMAL, row->rsize);
 
     if(E.syntax == NULL) return;
 
@@ -341,7 +341,7 @@ void editorUpdateSyntax(erow *row){
                 row->hl[i] = HL_MLCOMMENT;
                 if(!strncmp(&row->render[i], mce, mce_len)){
                     //more memory setting for comments 
-                    memset(&row->hl[i], HL_COMMENT, mce_len);
+                    memset(&row->hl[i], HL_MLCOMMENT, mce_len);
                     i += mce_len;
                     in_comment = 0;
                     prev_sep = 1;
@@ -445,7 +445,7 @@ void editorSelectSyntaxHighlight(){
     //if nothing matches there is no filename or filetype 
     E.syntax = NULL;
     if(E.filename == NULL) return;
-
+    //gives pointer to the last occurence of . in the filename
     char *ext = strrchr(E.filename, '.');
 
     for(unsigned int j = 0; j < HLDB_ENTRIES; j++){
@@ -701,7 +701,6 @@ void editorOpen(char *filename){
     //Length of each line
     ssize_t linelen;
     //getline is useful for as it does memory management for you, as long as linecap still has space it'll continue to read
-    // linelen = getline(&line, &linecap, fp);
     while ((linelen = getline(&line, &linecap, fp)) != -1){
         while(linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')){
             linelen--;
@@ -913,7 +912,7 @@ void editorDrawRows(struct abuf *ab){
                 //check for unreconized characters
                 if(iscntrl(c[j])){
                     char sym = (c[j]<= 26) ? '@' + c[j] : '?';
-                    abAppend(ab, "\x1b[7m", 5);
+                    abAppend(ab, "\x1b[7m", 4);
                     abAppend(ab, &sym, 1);
                     abAppend(ab, "\x1b[m", 3);
                     if(current_color != -1){

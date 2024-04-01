@@ -50,6 +50,19 @@ enum editorKey{
     PAGE_DOWN
 };
 
+//define different highlight colors 
+enum editorHighlight{
+    //normal non keys words are black which has the ANSI code 0 
+    HL_NORMAL = 0,
+    HL_COMMENT,
+    HL_STRING, 
+    HL_NUMBER,
+    HL_MATCH
+};
+
+#define HL_HIGHLIGHT_NUMBERS (1<<0)
+#define HL_HIGHLIGHT_STRINGS (1<<1)
+
 struct termios orig_termios;
 
 //error handling
@@ -62,6 +75,14 @@ void die(const char *s){
     perror(s);
     exit(1);
 }
+
+//make it so we can match filetypes 
+struct editorSyntax{
+    char *filetype;
+    char **filematch;
+    int flags;
+};
+
 //stores a line of text as pointer to dynamically allocated character and data length
 typedef struct erow{
     int size;
@@ -70,6 +91,7 @@ typedef struct erow{
     char *chars;
     //contains size of content of the render 
     char *render;
+    unsigned char *hl;
 }
 erow;
 
@@ -91,10 +113,24 @@ struct editorConfig{
     char *filename;
     char statusmsg[80];
     time_t statusmsg_time;
+    struct editorSyntax *syntax;
     struct termios orig_termios;
 };
 
 struct editorConfig E;
+
+char *C_HL_extensions[] = {".c", ".h.", ".cpp", NULL};
+//HLDB stands for highlight database 
+//wooo c extension support 
+struct editorSyntax HLDB[] = {
+    {
+        "c",
+        C_HL_extensions,
+        HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS
+    },
+};
+
+#define HLDB_ENTRIES (sizeof(HLDB) / sizeof(HLDB[0]))
 
 void editorSetStatusMessage(const char *fmt, ...);
 void editorRefreshScreen();
@@ -237,6 +273,108 @@ int getWindowSize(int *rows, int *cols){
         return 0;
     }
 }
+
+//check to see if a character is considered a separator
+int is_separator(int c){
+    return isspace(c) || c == '\0' || strchr(",.()+-/*=~%<>[];", c) != NULL;
+}
+
+void editorUpdateSyntax(erow *row){
+    //allocate memory for highlighting words 
+    row->hl = realloc(row->hl, row->size);
+    //automatically set all highlighting to normal
+    memset(row->hl, HL_NORMAL, row->size);
+
+    if(E.syntax == NULL) return;
+    //starts as 1 because the beginning of the line is considered to be a separator
+    int prev_sep = 1;
+    //keep track of if we're currently inside of a string
+    int in_string = 0;
+    
+    //figure out what color each word needs to be 
+    int i = 0;
+    while(i < row->rsize){
+        char c = row->render[i];
+        unsigned char prev_hl = (i > 0) ? row->hl[i - 1] : HL_NORMAL;
+        //highlight strings yay
+        if(E.syntax->flags & HL_HIGHLIGHT_STRINGS){
+            if(in_string){
+                row->hl[i] = HL_STRING;
+                //if the current character is a \ then there's at least one more character that needs to highlighted in the line
+                if(c == '\\' && i + 1 < row->rsize){
+                    row->hl[i + 1] = HL_STRING;
+                    i += 2;
+                    continue;
+                }
+                if(c == in_string) in_string = 0;
+                i++;
+                prev_sep = 1;
+                continue;
+            }
+            else{
+                if( c == '"' || c == '\''){
+                    in_string = c;
+                    row->hl[i] = HL_STRING;
+                    i++;
+                    continue;
+                }
+            }
+        }
+        //to highlight a number there has to be a separtor, period,  or number before it
+        if(E.syntax->flags & HL_HIGHLIGHT_NUMBERS){
+            if((isdigit(c) && (prev_sep || prev_hl == HL_NUMBER)) || (c == '.' && prev_hl == HL_NUMBER)){
+                row->hl[i] = HL_NUMBER;
+                i++;
+                prev_sep = 0;
+                continue;
+            }
+        }
+        prev_sep = is_separator(c);
+        i++;
+    }
+}
+
+int editorSyntaxToColor(int hl){
+    switch(hl){
+        //comments are cyan 
+        case HL_COMMENT: return 36;
+        //strings are magenta
+        case HL_STRING: return 35;
+        //foreground red for numbers, foreground white for anything else
+        case HL_NUMBER: return 31;
+        //if a word is found while searching highlight it 
+        case HL_MATCH: return 34;
+        default: return 37;
+    }
+}  
+
+void editorSelectSyntaxHighlight(){
+    //if nothing matches there is no filename or filetype 
+    E.syntax = NULL;
+    if(E.filename == NULL) return;
+
+    char *ext = strrchr(E.filename, '.');
+
+    for(unsigned int j = 0; j < HLDB_ENTRIES; j++){
+        struct editorSyntax *s = &HLDB[j];
+        unsigned int i = 0;
+        while(s->filematch[i]){
+            int is_ext = (s->filematch[i][0] == '.');
+            //returns pointer to last occurence of a character in a string 
+            if((is_ext && ext && !strcmp(ext, s->filematch[i])) || (!is_ext && strstr(E.filename, s->filematch[i]))){
+                E.syntax = s;
+
+                int filerow;
+                for(filerow = 0; filerow < E.numrows; filerow++){
+                    editorUpdateSyntax(&E.row[filerow]);
+                }
+                return;
+            }
+            i++;
+        }
+    }
+}
+ 
 //convert chars index in render index
 int editorRowCxToRx(erow *row, int cx){
     int rx = 0;
@@ -287,7 +425,9 @@ void editorUpdateRow(erow *row){
         }
     }   
     row->render[idx] = '\0';
-    row->rsize = idx; 
+    row->rsize = idx;
+    //do syntax highlighting 
+    editorUpdateSyntax(row); 
 }
 
 void editorInsertRow(int at, char *s, size_t len){ 
@@ -306,6 +446,8 @@ void editorInsertRow(int at, char *s, size_t len){
     E.row[at].chars[len] = '\0';
     E.row[at].rsize = 0;
     E.row[at].render = NULL;
+    //making a variable for highlighting
+    E.row[at].hl = NULL;
     editorUpdateRow(&E.row[at]);
     //set numrows to one to indict erow has a line that now needs to be displayed
     E.numrows++;    
@@ -317,6 +459,7 @@ void editorInsertRow(int at, char *s, size_t len){
 void editorFreeRow(erow *row){
     free(row->render);
     free(row->chars);
+    free(row->hl);
 }
 
 //delete row when you backspace at the end of a line
@@ -450,6 +593,9 @@ void editorOpen(char *filename){
     free(E.filename);
     E.filename = strdup(filename);
 
+    //check if syntax highlighting is necessary 
+    editorSelectSyntaxHighlight();
+
     //fopen takes a filename and opens the file for reading
     FILE *fp = fopen(filename, "r");
     if(!fp) die ("fopen");
@@ -485,6 +631,8 @@ void editorSave(){
             editorSetStatusMessage("Save Aborted");
             return;
         }
+        //check for filetype to see if syntax highlighting is needed
+        editorSelectSyntaxHighlight();
     }
 
     int len;
@@ -518,6 +666,18 @@ void editorFindCallback(char *query, int key){
     //save the previous word that was matched
     static int last_match = -1;
     static int direction = 1;
+    
+    //save the color of the result before it's searched for so we can change it back afterwords
+    static int saved_hl_line;
+    static char *saved_hl = NULL;
+
+    if(saved_hl){
+        memcpy(E.row[saved_hl_line].hl, saved_hl, E.row[saved_hl_line].rsize);
+        //free extra memory 
+        free(saved_hl);
+        saved_hl = NULL;
+    }
+
     if(key == '\r' || key == '\x1b'){
         last_match = -1;
         direction = 1;
@@ -551,6 +711,12 @@ void editorFindCallback(char *query, int key){
             E.cx = editorRowRxToCx(row, match - row->render);
             //set so that the cursor scrolls to the instance
             E.rowoff = E.numrows;
+            saved_hl_line = current;
+            //allocate memory, woo
+            saved_hl = malloc(row->size);
+            memcpy(saved_hl, row->hl, row->size);
+            //highlight search result
+            memset(&row->hl[match - row->render], HL_MATCH, strlen(query));
             break;
         }
     }
@@ -640,7 +806,35 @@ void editorDrawRows(struct abuf *ab){
             int len = E.row[filerow].rsize - E.coloff;
             if(len < 0) len = 0;
             if(len > E.screencols) len = E.screencols;
-            abAppend(ab, &E.row[filerow].render[E.coloff], len);  
+            char *c = &E.row[filerow].render[E.coloff];
+            unsigned char *hl = &E.row[filerow].hl[E.coloff];
+            //-1 is for the default text color
+            int current_color = -1;
+            int j;
+            //set text color for syntax highlighting 
+            for(j = 0; j < len; j++){
+                if(hl[j] == HL_NORMAL){
+                    //if the current color isn't normal set it so that it is
+                    if(current_color != -1){
+                        abAppend(ab, "\x1b[39m", 5);
+                        current_color = -1;
+                    }
+                    abAppend(ab, &c[j], 1);
+                }
+                else{
+                    //if color is not normal change to highlight
+                    int color = editorSyntaxToColor(hl[j]);
+                    //if the color is not equal to the current color set the current color to color
+                    if(color != current_color){
+                        current_color = color;
+                        char buf[16];
+                        int clen = snprintf(buf, sizeof(buf), "\x1b[%dm", color);
+                        abAppend(ab, buf, clen);
+                    }
+                    abAppend(ab, &c[j], 1);
+                }
+            } 
+            abAppend(ab, "\x1b[39m", 5);
         }
         abAppend(ab, "\x1b[K", 3);
         /* Make room for a one-line status bar
@@ -656,7 +850,7 @@ void editorDrawStatusBar(struct abuf *ab) {
     int len = snprintf(status, sizeof(status), "%.20s - %d lines %s",
                        E.filename ? E.filename : "[No Name]", E.numrows,
                        E.dirty ? "(modified)" : "");
-    int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", E.cy + 1, E.numrows);
+    int rlen = snprintf(rstatus, sizeof(rstatus), "%s | %d/%d", E.syntax ? E.syntax->filetype : "no ft", E.cy + 1, E.numrows);
 
     if (len > E.screencols) len = E.screencols;
     abAppend(ab, status, len);
@@ -915,6 +1109,7 @@ void initEditor(){
     E.filename = NULL;
     E.statusmsg[0] = '\0';
     E.statusmsg_time = 0;
+    E.syntax = NULL;
 
     if(getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
     E.screenrows -= 2;

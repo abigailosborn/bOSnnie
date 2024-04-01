@@ -3,10 +3,10 @@
 This is a minimalistic (read: useless) operating system targeting Raspberry Pi 3 & 4.  
 It has features:
 - [ ] Shell (bashnie)
-- [ ] Text editor (bonnotepad)
+- [X] Text editor (bonnotepad)
 - [ ] Fun Application (gourdey)
 - [X] Nothing else
 - [ ] Maybe malware tho
 
 # Resources 
-https://viewsourcecode.org/snaptoken/kilo/07.syntaxHighlighting.html (currently on step 170)
+https://viewsourcecode.org/snaptoken/kilo/08.appendices.html (Finished the tutorial!)

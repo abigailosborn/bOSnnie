@@ -55,6 +55,7 @@ enum editorHighlight{
     //normal non keys words are black which has the ANSI code 0 
     HL_NORMAL = 0,
     HL_COMMENT,
+    HL_MLCOMMENT,
     HL_KEYWORD1,
     HL_KEYWORD2,
     HL_STRING, 
@@ -85,11 +86,15 @@ struct editorSyntax{
     char **keywords;
     //make it so programs can have comments 
     char *singleline_comment_start;
+    //multiline comments
+    char *multiline_comment_start;
+    char *multiline_comment_end;
     int flags;
 };
 
 //stores a line of text as pointer to dynamically allocated character and data length
 typedef struct erow{
+    int idx;
     int size;
     //size of the row
     int rsize; 
@@ -97,6 +102,7 @@ typedef struct erow{
     //contains size of content of the render 
     char *render;
     unsigned char *hl;
+    int hl_open_comment;
 }
 erow;
 
@@ -139,7 +145,7 @@ struct editorSyntax HLDB[] = {
         C_HL_extensions,
         C_HL_keywords,
         //syntax for comments 
-        "//",
+        "//", "/*", "*/",
         HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS
     },
 };
@@ -303,11 +309,18 @@ void editorUpdateSyntax(erow *row){
 
     char **keywords= E.syntax->keywords;
     char *scs = E.syntax->singleline_comment_start;
+    char *mcs = E.syntax->multiline_comment_start;
+    char *mce = E.syntax->multiline_comment_end;
+
     int scs_len = scs ? strlen(scs) : 0;
+    int mcs_len = mcs ? strlen(mcs) : 0;
+    int mce_len = mce ? strlen(mce) : 0;
     //starts as 1 because the beginning of the line is considered to be a separator
     int prev_sep = 1;
     //keep track of if we're currently inside of a string
     int in_string = 0;
+    //keep track if we're currently in a comment 
+    int in_comment = (row->idx > 0 && E.row[row->idx - 1].hl_open_comment);
     
     //figure out what color each word needs to be 
     int i = 0;
@@ -315,10 +328,35 @@ void editorUpdateSyntax(erow *row){
         char c = row->render[i];
         unsigned char prev_hl = (i > 0) ? row->hl[i - 1] : HL_NORMAL;
         //highlighting comments time 
-        if(scs_len && !in_string){
+        if(scs_len && !in_string && !in_comment){
             if(!strncmp(&row->render[i], scs, scs_len)){
                 memset(&row->hl[i], HL_COMMENT, row->rsize - i);
                 break;
+            }
+        }
+        
+        if(mcs_len && mce_len && !in_string){
+            //mcs and mce need to be above 0 to know if the comment is multiple lines
+            if(in_comment){
+                row->hl[i] = HL_MLCOMMENT;
+                if(!strncmp(&row->render[i], mce, mce_len)){
+                    //more memory setting for comments 
+                    memset(&row->hl[i], HL_COMMENT, mce_len);
+                    i += mce_len;
+                    in_comment = 0;
+                    prev_sep = 1;
+                    continue;
+                }
+                else{
+                    i++;
+                    continue;
+                }
+            }
+            else if(!strncmp(&row->render[i], mcs, mcs_len)){
+                memset(&row->hl[i], HL_MLCOMMENT, mcs_len);
+                i += mcs_len;
+                in_comment = 1;
+                continue;
             }
         }
         //highlight strings yay
@@ -377,12 +415,18 @@ void editorUpdateSyntax(erow *row){
         prev_sep = is_separator(c);
         i++;
     }
+    int changed = (row->hl_open_comment != in_comment);
+    row->hl_open_comment = in_comment;
+    if(changed && row->idx + 1 < E.numrows){
+        editorUpdateSyntax(&E.row[row->idx + 1]);
+    }
 }
 
 int editorSyntaxToColor(int hl){
     switch(hl){
         //comments are cyan 
-        case HL_COMMENT: return 36;
+        case HL_COMMENT: 
+        case HL_MLCOMMENT: return 36;
         //keywords yellow
         case HL_KEYWORD1: return 33;
         //commonly used words green
@@ -485,7 +529,9 @@ void editorInsertRow(int at, char *s, size_t len){
     //reallocate the amount of memory set aside for rows to make space for a new one
     E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1));
     memmove(&E.row[at + 1], &E.row[at], sizeof(erow) * (E.numrows - at));
-    E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1));
+    for(int j = at + 1; j <= E.numrows; j++) E.row[j].idx++;    
+
+    E.row[at].idx = at;
     
     E.row[at].size = len;
     //allocate enough memory for the length of the message
@@ -497,6 +543,7 @@ void editorInsertRow(int at, char *s, size_t len){
     E.row[at].render = NULL;
     //making a variable for highlighting
     E.row[at].hl = NULL;
+    E.row[at].hl_open_comment = 0;
     editorUpdateRow(&E.row[at]);
     //set numrows to one to indict erow has a line that now needs to be displayed
     E.numrows++;    
@@ -516,6 +563,7 @@ void editorDelRow(int at){
     if(at < 0 || at >= E.numrows) return;
     editorFreeRow(&E.row[at]);
     memmove(&E.row[at], &E.row[at + 1], sizeof(erow) * (E.numrows - at - 1));
+    for(int j = at; j < E.numrows - 1; j++) E.row[j].idx--;
     E.numrows--;
     E.dirty;
 }

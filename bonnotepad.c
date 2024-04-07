@@ -1,8 +1,6 @@
 #define _DEFAULT_SOURCE
 #define _BSD_SOURCE
 #define _GNU_SOURCE
-
-//above the includes because header files included use the macros
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -133,7 +131,7 @@ struct editorConfig E;
 char *C_HL_extensions[] = {".c", ".h.", ".cpp", NULL};
 //define different keywords
 char *C_HL_keywords[] ={
-    "switch", "if", "while", "for", "break", "continue", "return", "else", "struct", "union", "typedef", "static", "enum", "class", "case", 
+    "switch", "if", "while", "for", "break", "continue", "return", "else", "struct", "union", "typedef", "static", "enum", "class", "case", "#include",
 
     "int|", "long|", "double|", "float|", "char|", "unsigned|", "signed|", "void|", NULL
 };
@@ -375,7 +373,7 @@ void editorUpdateSyntax(erow *row){
                 continue;
             }
             else{
-                if( c == '"' || c == '\''){
+                if(c == '"' || c == '\''){
                     in_string = c;
                     row->hl[i] = HL_STRING;
                     i++;
@@ -393,6 +391,10 @@ void editorUpdateSyntax(erow *row){
             }
         }
         //highlight keywords for c 
+        /*check to see if there is a separator because there has to be
+          one to highlight. After that see if the keyword is of type 1
+          or two. If it's keyword one then set the color to yellow, if           it's a keyword two set the color to green. Then update the 
+          syntax color  */
         if(prev_sep){
             int j;
             for(j = 0; keywords[j]; j++){
